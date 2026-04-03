@@ -420,32 +420,56 @@ class MarketDataCache:
         symbol_code = config['code']
         market = config['market']
         source = config.get('source', 'yahoo')
-        
+    
         logger.info(f"更新价格: {symbol_name} ({symbol_code}) [{source}]")
-        
+    
         with db_connection(self.db_path) as conn:
             c = conn.cursor()
-            c.execute("SELECT date FROM prices WHERE symbol_code = ?", (symbol_code,))
-            existing = {row[0] for row in c.fetchall()}
+        
+            # 对于新浪数据源，每次都获取并覆盖历史数据
+            if source == 'sina':
+                # 获取最新数据（新浪会返回复权后的完整历史）
+                new_prices = self._get_prices(symbol_name, config)
+                if not new_prices:
+                    return 0
             
-            new_prices = self._get_prices(symbol_name, config)
-            if not new_prices:
-                return 0
+                # 删除该标的所有旧数据，重新插入
+                c.execute("DELETE FROM prices WHERE symbol_code = ?", (symbol_code,))
             
-            missing = [p for p in new_prices if p['date'] not in existing]
-            
-            if missing:
-                for p in missing:
+                for p in new_prices:
                     c.execute('''
-                        INSERT OR IGNORE INTO prices (symbol_code, date, close, market, source, updated_at)
+                        INSERT INTO prices (symbol_code, date, close, market, source, updated_at)
                         VALUES (?, ?, ?, ?, ?, ?)
                     ''', (symbol_code, p['date'], p['close'], market, source,
                           datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+            
                 conn.commit()
-                logger.info(f"{symbol_name} 新增 {len(missing)} 条")
-                self.update_stats['prices'][symbol_name] = len(missing)
-                self.update_stats['total_added'] += len(missing)
-            return len(missing)
+                logger.info(f"{symbol_name} 重新获取 {len(new_prices)} 条复权数据")
+                self.update_stats['prices'][symbol_name] = len(new_prices)
+                self.update_stats['total_added'] += len(new_prices)
+                return len(new_prices)
+        
+            else:
+                # 原有的增量更新逻辑
+                c.execute("SELECT date FROM prices WHERE symbol_code = ?", (symbol_code,))
+                existing = {row[0] for row in c.fetchall()}
+                new_prices = self._get_prices(symbol_name, config)
+                if not new_prices:
+                    return 0
+            
+                missing = [p for p in new_prices if p['date'] not in existing]
+                if missing:
+                    for p in missing:
+                        c.execute('''
+                            INSERT OR IGNORE INTO prices (symbol_code, date, close, market, source, updated_at)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        ''', (symbol_code, p['date'], p['close'], market, source,
+                              datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+                    conn.commit()
+                    logger.info(f"{symbol_name} 新增 {len(missing)} 条")
+                    self.update_stats['prices'][symbol_name] = len(missing)
+                    self.update_stats['total_added'] += len(missing)
+                return len(missing)
     
     def update_all(self):
         self.update_stats['start_time'] = datetime.now()
