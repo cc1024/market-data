@@ -1,12 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+
+# 解决Windows控制台编码问题
+import sys
+import io
+
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
 """
 市场数据缓存程序 - GitHub Actions版
 自动获取金融数据并保存到Git仓库
 """
 
 import os
-import sys
 import json
 import sqlite3
 import logging
@@ -493,16 +501,17 @@ class MarketDataCache:
             count = price_stats.get(code, 0)
             source = config.get('source', 'yahoo')
             source_icon = "📡" if source == 'sina' else "🌐" if source == 'yahoo' else "⚙️"
-            print(f"  {source_icon} {config['display_name']} ({code}): {count} records [{source}]")
+            # 根据小数位数显示价格示例
+            decimals = config.get('decimals', 2)
+            price_example = f"1.{'0'*decimals}" if decimals == 3 else "1.00"
+            print(f"  {source_icon} {config['display_name']} ({code}): {count} records [{source}, {decimals} decimals]")
         print("=" * 70 + "\n")
 
+
+# ==================== CSV导出函数 ====================
 def export_data_to_csv(db_path, data_dir):
     """
     将数据库中的数据导出为CSV文件
-    
-    Args:
-        db_path: 数据库文件路径
-        data_dir: CSV文件保存目录
     """
     import pandas as pd
     from datetime import datetime
@@ -518,6 +527,7 @@ def export_data_to_csv(db_path, data_dir):
                 p.close,
                 p.market,
                 p.source,
+                s.decimals,
                 p.updated_at
             FROM prices p
             JOIN symbols s ON p.symbol_code = s.symbol_code
@@ -527,7 +537,7 @@ def export_data_to_csv(db_path, data_dir):
         prices_df.to_csv(prices_csv, index=False, encoding='utf-8-sig')
         logger.info(f"    保存 {len(prices_df)} 条价格记录到 prices.csv")
         
-        # 2. 导出最新价格快照
+        # 2. 导出最新价格快照（修复三位小数显示）
         logger.info("  导出最新价格...")
         latest_df = pd.read_sql_query("""
             SELECT 
@@ -535,7 +545,8 @@ def export_data_to_csv(db_path, data_dir):
                 s.symbol_code,
                 p.date,
                 p.close,
-                p.source
+                p.source,
+                s.decimals
             FROM prices p
             JOIN symbols s ON p.symbol_code = s.symbol_code
             WHERE (p.symbol_code, p.date) IN (
@@ -545,9 +556,30 @@ def export_data_to_csv(db_path, data_dir):
             )
             ORDER BY s.name
         """, conn)
+        
+        # 根据小数位数格式化价格
+        formatted_prices = []
+        for _, row in latest_df.iterrows():
+            if pd.isna(row['close']):
+                formatted_prices.append('N/A')
+            elif row['source'] == 'sina' or row['decimals'] == 3:
+                formatted_prices.append(f"{row['close']:.3f}")
+            else:
+                formatted_prices.append(f"{row['close']:.2f}")
+        
+        latest_df['formatted_close'] = formatted_prices
+        
+        # 保存CSV（包含原始价格和格式化价格）
         latest_csv = os.path.join(data_dir, "latest_prices.csv")
         latest_df.to_csv(latest_csv, index=False, encoding='utf-8-sig')
         logger.info(f"    保存 {len(latest_df)} 条最新价格到 latest_prices.csv")
+        
+        # 同时保存一个仅用于显示的版本
+        display_df = latest_df[['display_name', 'formatted_close', 'date', 'source']].copy()
+        display_df.columns = ['标的名称', '最新价格', '日期', '数据源']
+        display_csv = os.path.join(data_dir, "latest_prices_display.csv")
+        display_df.to_csv(display_csv, index=False, encoding='utf-8-sig')
+        logger.info(f"    保存显示版最新价格到 latest_prices_display.csv")
         
         # 3. 导出交易日数据
         logger.info("  导出交易日数据...")
@@ -570,6 +602,7 @@ def export_data_to_csv(db_path, data_dir):
                 s.display_name,
                 s.symbol_code,
                 s.source,
+                s.decimals,
                 COUNT(p.date) as record_count,
                 MIN(p.date) as first_date,
                 MAX(p.date) as last_date,
@@ -585,7 +618,7 @@ def export_data_to_csv(db_path, data_dir):
         stats_df.to_csv(stats_csv, index=False, encoding='utf-8-sig')
         logger.info(f"    保存 {len(stats_df)} 条统计记录到 statistics.csv")
         
-        # 5. 导出每周汇总数据（可选）
+        # 5. 导出每周汇总数据
         logger.info("  导出每周汇总...")
         weekly_df = pd.read_sql_query("""
             SELECT 
@@ -606,7 +639,7 @@ def export_data_to_csv(db_path, data_dir):
         weekly_df.to_csv(weekly_csv, index=False, encoding='utf-8-sig')
         logger.info(f"    保存 {len(weekly_df)} 条周汇总记录到 weekly_summary.csv")
         
-        # ========== 6. 生成数据摘要报告 ==========
+        # 6. 生成数据摘要报告
         logger.info("  生成数据摘要报告...")
         
         # 获取数据库文件大小
@@ -622,6 +655,12 @@ def export_data_to_csv(db_path, data_dir):
         
         # 获取最近更新时间
         latest_update = prices_df['updated_at'].max() if len(prices_df) > 0 else '无数据'
+        
+        # 市场名称映射
+        market_names = {
+            'CN': '中国A股', 'US': '美国股市', 'HK': '香港股市',
+            'DE': '德国股市', 'IN': '印度股市', 'COMEX': '黄金期货', 'DCE': '大连商品交易所'
+        }
         
         # 创建报告内容
         report_lines = []
@@ -645,35 +684,19 @@ def export_data_to_csv(db_path, data_dir):
         report_lines.append("")
         
         report_lines.append("💰 最新价格快报:")
-        # 获取前10个标的最新价格（按名称排序）
-        for idx, row in latest_df.head(10).iterrows():
-            report_lines.append(f"  • {row['display_name']}: {row['close']:.2f} ({row['date']})")
-        if len(latest_df) > 10:
-            report_lines.append(f"  ... 还有 {len(latest_df) - 10} 个标的")
+        for _, row in latest_df.iterrows():
+            if row['source'] == 'sina' or row['decimals'] == 3:
+                price_str = f"{row['close']:.3f}"
+            else:
+                price_str = f"{row['close']:.2f}"
+            report_lines.append(f"  • {row['display_name']}: {price_str} ({row['date']})")
         report_lines.append("")
         
         report_lines.append("📅 交易日历概况:")
-        # 获取各市场的交易日数量
         market_counts = trading_df.groupby('market').size().to_dict()
-        market_names = {
-            'CN': '中国A股', 'US': '美国股市', 'HK': '香港股市',
-            'DE': '德国股市', 'IN': '印度股市', 'COMEX': '黄金期货'
-        }
         for market, count in market_counts.items():
             market_name = market_names.get(market, market)
             report_lines.append(f"  • {market_name}: {count} 个交易日")
-        report_lines.append("")
-        
-        report_lines.append("📈 本周表现 (最近5个交易日):")
-        # 获取本周各标的涨跌幅（简化版）
-        for symbol in latest_df['display_name'].head(5):
-            symbol_data = prices_df[prices_df['display_name'] == symbol].head(5)
-            if len(symbol_data) >= 2:
-                latest = symbol_data.iloc[0]['close']
-                previous = symbol_data.iloc[-1]['close']
-                change = ((latest - previous) / previous) * 100
-                arrow = "↑" if change > 0 else "↓" if change < 0 else "→"
-                report_lines.append(f"  • {symbol}: {latest:.2f} ({arrow} {abs(change):.2f}%)")
         report_lines.append("")
         
         report_lines.append("=" * 70)
@@ -686,7 +709,7 @@ def export_data_to_csv(db_path, data_dir):
             f.write("\n".join(report_lines))
         logger.info(f"    数据摘要报告已保存到 report.txt")
         
-        # 同时保存为Markdown格式（适合在GitHub上直接显示）
+        # 同时保存为Markdown格式
         report_md = os.path.join(data_dir, "REPORT.md")
         with open(report_md, 'w', encoding='utf-8') as f:
             f.write("# 市场数据摘要报告\n\n")
@@ -705,10 +728,15 @@ def export_data_to_csv(db_path, data_dir):
             f.write("\n")
             
             f.write("## 💰 最新价格快报\n")
-            f.write("| 标的名称 | 最新价格 | 日期 |\n")
-            f.write("|---------|---------|------|\n")
+            f.write("| 标的名称 | 最新价格 | 日期 | 数据源 |\n")
+            f.write("|---------|---------|------|--------|\n")
             for _, row in latest_df.iterrows():
-                f.write(f"| {row['display_name']} | {row['close']:.2f} | {row['date']} |\n")
+                if row['source'] == 'sina' or row['decimals'] == 3:
+                    price_str = f"{row['close']:.3f}"
+                else:
+                    price_str = f"{row['close']:.2f}"
+                source_name = "新浪" if row['source'] == 'sina' else "Yahoo" if row['source'] == 'yahoo' else "天勤"
+                f.write(f"| {row['display_name']} | {price_str} | {row['date']} | {source_name} |\n")
             f.write("\n")
             
             f.write("## 📅 交易日历概况\n")
@@ -722,22 +750,41 @@ def export_data_to_csv(db_path, data_dir):
     
     logger.info(f"CSV文件已保存到: {data_dir}")
 
+
+# ==================== 图表生成函数 ====================
 def generate_price_charts(db_path, data_dir):
     """
-    生成价格走势图
-    
-    Args:
-        db_path: 数据库文件路径
-        data_dir: 图表保存目录
+    生成价格走势图（支持中文显示）
     """
     import pandas as pd
+    import matplotlib
+    matplotlib.use('Agg')  # 使用非交互式后端
     import matplotlib.pyplot as plt
     import matplotlib.dates as mdates
     from datetime import datetime
     
-    # 设置中文字体（解决中文显示问题）
-    plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
-    plt.rcParams['axes.unicode_minus'] = False
+    # 设置中文字体（如果可用）
+    try:
+        # 尝试使用中文字体
+        import matplotlib.font_manager as fm
+        
+        # 检查可用的中文字体
+        chinese_fonts = ['WenQuanYi Micro Hei', 'WenQuanYi Zen Hei', 'SimHei', 'Microsoft YaHei', 'DejaVu Sans']
+        available_fonts = [f.name for f in fm.fontManager.ttflist]
+        
+        for font in chinese_fonts:
+            if font in available_fonts:
+                plt.rcParams['font.sans-serif'] = [font, 'DejaVu Sans']
+                break
+        else:
+            plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
+        
+        plt.rcParams['axes.unicode_minus'] = False
+        logger.info("    中文字体配置成功")
+    except Exception as e:
+        logger.warning(f"    中文字体配置失败，将使用英文标签: {e}")
+        plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
+        plt.rcParams['axes.unicode_minus'] = False
     
     # 创建图表保存目录
     charts_dir = os.path.join(data_dir, "charts")
@@ -748,12 +795,13 @@ def generate_price_charts(db_path, data_dir):
     with db_connection(db_path) as conn:
         # 获取所有标的信息
         symbols_df = pd.read_sql_query("""
-            SELECT symbol_code, display_name, source
+            SELECT symbol_code, display_name, source, decimals
             FROM symbols
             ORDER BY name
         """, conn)
         
         # 为每个标的生成图表
+        chart_count = 0
         for _, symbol in symbols_df.iterrows():
             symbol_code = symbol['symbol_code']
             display_name = symbol['display_name']
@@ -784,7 +832,7 @@ def generate_price_charts(db_path, data_dir):
             ax1.fill_between(prices_df['date'], prices_df['close'], 
                             alpha=0.3, color='#1f77b4')
             
-            # 添加移动平均线（20日和60日）
+            # 添加移动平均线
             if len(prices_df) >= 20:
                 ma20 = prices_df['close'].rolling(window=20).mean()
                 ax1.plot(prices_df['date'], ma20, 
@@ -804,10 +852,8 @@ def generate_price_charts(db_path, data_dir):
             ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
             ax1.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
             
-            # 下子图：成交量（简化版，如果有数据的话）
+            # 下子图：涨跌幅
             ax2 = axes[1]
-            # 这里简化处理，如果有成交量数据可以添加
-            # 计算每日涨跌
             prices_df['change'] = prices_df['close'].pct_change() * 100
             colors = ['red' if x < 0 else 'green' for x in prices_df['change']]
             ax2.bar(prices_df['date'], prices_df['change'], color=colors, alpha=0.6, width=0.8)
@@ -828,97 +874,96 @@ def generate_price_charts(db_path, data_dir):
             plt.savefig(chart_file, dpi=150, bbox_inches='tight')
             plt.close()
             
+            chart_count += 1
             logger.info(f"    ✓ {display_name} 图表已生成")
         
         # 生成综合对比图
-        logger.info("  生成综合对比图...")
-        fig, ax = plt.subplots(figsize=(14, 8))
-        
-        # 为每个标的绘制归一化后的价格走势（起始点为100）
-        for _, symbol in symbols_df.iterrows():
-            symbol_code = symbol['symbol_code']
-            display_name = symbol['display_name']
+        if chart_count > 0:
+            logger.info("  生成综合对比图...")
+            fig, ax = plt.subplots(figsize=(14, 8))
             
-            prices_df = pd.read_sql_query("""
-                SELECT date, close
-                FROM prices
-                WHERE symbol_code = ?
-                ORDER BY date
-            """, conn, params=(symbol_code,))
+            for _, symbol in symbols_df.iterrows():
+                symbol_code = symbol['symbol_code']
+                display_name = symbol['display_name']
+                
+                prices_df = pd.read_sql_query("""
+                    SELECT date, close
+                    FROM prices
+                    WHERE symbol_code = ?
+                    ORDER BY date
+                """, conn, params=(symbol_code,))
+                
+                if len(prices_df) > 0:
+                    # 归一化处理
+                    normalized = (prices_df['close'] / prices_df['close'].iloc[0]) * 100
+                    ax.plot(prices_df['date'], normalized, 
+                           linewidth=1.5, label=display_name, alpha=0.7)
             
-            if len(prices_df) > 0:
-                # 归一化处理
-                normalized = (prices_df['close'] / prices_df['close'].iloc[0]) * 100
-                ax.plot(prices_df['date'], normalized, 
-                       linewidth=1.5, label=display_name, alpha=0.7)
-        
-        ax.set_title('各标的相对表现对比（归一化到100）', fontsize=14, fontweight='bold')
-        ax.set_ylabel('相对值（起始=100）', fontsize=11)
-        ax.set_xlabel('日期', fontsize=11)
-        ax.legend(loc='best', ncol=2, fontsize=9)
-        ax.grid(True, alpha=0.3)
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
-        
-        plt.tight_layout()
-        
-        # 保存综合对比图
-        comparison_file = os.path.join(charts_dir, "performance_comparison.png")
-        plt.savefig(comparison_file, dpi=150, bbox_inches='tight')
-        plt.close()
-        logger.info(f"    ✓ 综合对比图已生成")
-        
-        # 生成近期表现热力图（最近30天的涨跌幅）
-        logger.info("  生成近期表现热力图...")
-        fig, ax = plt.subplots(figsize=(12, 8))
-        
-        # 获取最近30天的数据
-        end_date = datetime.now()
-        start_date = end_date - pd.Timedelta(days=30)
-        
-        performance_data = []
-        for _, symbol in symbols_df.iterrows():
-            symbol_code = symbol['symbol_code']
-            display_name = symbol['display_name']
-            
-            prices_df = pd.read_sql_query("""
-                SELECT date, close
-                FROM prices
-                WHERE symbol_code = ? AND date >= ?
-                ORDER BY date
-            """, conn, params=(symbol_code, start_date.strftime('%Y-%m-%d')))
-            
-            if len(prices_df) > 1:
-                # 计算每日涨跌幅
-                returns = prices_df['close'].pct_change() * 100
-                performance_data.append({
-                    'name': display_name,
-                    'returns': returns.values[1:]  # 去掉第一个NaN
-                })
-        
-        # 绘制热力图（简化版）
-        if performance_data:
-            import numpy as np
-            data_matrix = np.array([p['returns'] for p in performance_data])
-            im = ax.imshow(data_matrix, cmap='RdYlGn', aspect='auto', vmin=-3, vmax=3)
-            ax.set_xticks(range(data_matrix.shape[1]))
-            ax.set_yticks(range(len(performance_data)))
-            ax.set_xticklabels(range(1, data_matrix.shape[1] + 1))
-            ax.set_yticklabels([p['name'] for p in performance_data])
-            plt.colorbar(im, ax=ax, label='涨跌幅 (%)')
-            ax.set_title('近30日各标的每日涨跌幅热力图', fontsize=14, fontweight='bold')
-            ax.set_xlabel('天数（最近）', fontsize=11)
-            ax.set_ylabel('标的', fontsize=11)
+            ax.set_title('各标的相对表现对比（归一化到100）', fontsize=14, fontweight='bold')
+            ax.set_ylabel('相对值（起始=100）', fontsize=11)
+            ax.set_xlabel('日期', fontsize=11)
+            ax.legend(loc='best', ncol=2, fontsize=9)
+            ax.grid(True, alpha=0.3)
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+            ax.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
             
             plt.tight_layout()
-            heatmap_file = os.path.join(charts_dir, "performance_heatmap.png")
-            plt.savefig(heatmap_file, dpi=150, bbox_inches='tight')
+            
+            comparison_file = os.path.join(charts_dir, "performance_comparison.png")
+            plt.savefig(comparison_file, dpi=150, bbox_inches='tight')
             plt.close()
-            logger.info(f"    ✓ 热力图已生成")
+            logger.info(f"    ✓ 综合对比图已生成")
+            
+            # 生成热力图
+            logger.info("  生成近期表现热力图...")
+            fig, ax = plt.subplots(figsize=(12, 8))
+            
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=30)
+            
+            performance_data = []
+            for _, symbol in symbols_df.iterrows():
+                symbol_code = symbol['symbol_code']
+                display_name = symbol['display_name']
+                
+                prices_df = pd.read_sql_query("""
+                    SELECT date, close
+                    FROM prices
+                    WHERE symbol_code = ? AND date >= ?
+                    ORDER BY date
+                """, conn, params=(symbol_code, start_date.strftime('%Y-%m-%d')))
+                
+                if len(prices_df) > 1:
+                    returns = prices_df['close'].pct_change() * 100
+                    performance_data.append({
+                        'name': display_name,
+                        'returns': returns.values[1:]
+                    })
+            
+            if performance_data:
+                import numpy as np
+                data_matrix = np.array([p['returns'] for p in performance_data])
+                im = ax.imshow(data_matrix, cmap='RdYlGn', aspect='auto', vmin=-3, vmax=3)
+                ax.set_xticks(range(data_matrix.shape[1]))
+                ax.set_yticks(range(len(performance_data)))
+                ax.set_xticklabels(range(1, data_matrix.shape[1] + 1))
+                ax.set_yticklabels([p['name'] for p in performance_data])
+                plt.colorbar(im, ax=ax, label='涨跌幅 (%)')
+                ax.set_title('近30日各标的每日涨跌幅热力图', fontsize=14, fontweight='bold')
+                ax.set_xlabel('天数（最近）', fontsize=11)
+                ax.set_ylabel('标的', fontsize=11)
+                
+                plt.tight_layout()
+                heatmap_file = os.path.join(charts_dir, "performance_heatmap.png")
+                plt.savefig(heatmap_file, dpi=150, bbox_inches='tight')
+                plt.close()
+                logger.info(f"    ✓ 热力图已生成")
     
     logger.info(f"图表已保存到: {charts_dir}")
     return charts_dir
 
+
+# ==================== 主函数 ====================
 def main():
     print("\n" + "=" * 70)
     print("Market Data Cache Updater - GitHub Actions Edition")
@@ -932,7 +977,8 @@ def main():
     for name, config in SYMBOLS.items():
         source = config.get('source', 'yahoo')
         source_icon = "📡" if source == 'sina' else "🌐" if source == 'yahoo' else "⚙️"
-        print(f"  {source_icon} {config['display_name']}: {config['code']} [{source}]")
+        decimals = config.get('decimals', 2)
+        print(f"  {source_icon} {config['display_name']}: {config['code']} [{source}, {decimals} decimals]")
     print("=" * 70)
     
     cache = MarketDataCache()
@@ -954,8 +1000,6 @@ def main():
         logger.info("价格走势图生成成功")
     except Exception as e:
         logger.error(f"图表生成失败: {e}")
-        logger.error(f"错误详情: {e}")
-        # 如果matplotlib未安装，给出提示
         if "No module named 'matplotlib'" in str(e):
             logger.error("请先安装matplotlib: pip install matplotlib")
     
