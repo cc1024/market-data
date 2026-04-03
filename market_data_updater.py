@@ -722,6 +722,203 @@ def export_data_to_csv(db_path, data_dir):
     
     logger.info(f"CSV文件已保存到: {data_dir}")
 
+def generate_price_charts(db_path, data_dir):
+    """
+    生成价格走势图
+    
+    Args:
+        db_path: 数据库文件路径
+        data_dir: 图表保存目录
+    """
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    import matplotlib.dates as mdates
+    from datetime import datetime
+    
+    # 设置中文字体（解决中文显示问题）
+    plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
+    plt.rcParams['axes.unicode_minus'] = False
+    
+    # 创建图表保存目录
+    charts_dir = os.path.join(data_dir, "charts")
+    os.makedirs(charts_dir, exist_ok=True)
+    
+    logger.info("  生成价格走势图...")
+    
+    with db_connection(db_path) as conn:
+        # 获取所有标的信息
+        symbols_df = pd.read_sql_query("""
+            SELECT symbol_code, display_name, source
+            FROM symbols
+            ORDER BY name
+        """, conn)
+        
+        # 为每个标的生成图表
+        for _, symbol in symbols_df.iterrows():
+            symbol_code = symbol['symbol_code']
+            display_name = symbol['display_name']
+            
+            # 获取价格数据
+            prices_df = pd.read_sql_query("""
+                SELECT date, close
+                FROM prices
+                WHERE symbol_code = ?
+                ORDER BY date
+            """, conn, params=(symbol_code,))
+            
+            if len(prices_df) == 0:
+                logger.warning(f"    {display_name}: 无数据，跳过")
+                continue
+            
+            # 转换日期格式
+            prices_df['date'] = pd.to_datetime(prices_df['date'])
+            
+            # 创建图表
+            fig, axes = plt.subplots(2, 1, figsize=(14, 8), 
+                                      gridspec_kw={'height_ratios': [3, 1]})
+            
+            # 上子图：价格走势
+            ax1 = axes[0]
+            ax1.plot(prices_df['date'], prices_df['close'], 
+                    linewidth=1.5, color='#1f77b4', label='收盘价')
+            ax1.fill_between(prices_df['date'], prices_df['close'], 
+                            alpha=0.3, color='#1f77b4')
+            
+            # 添加移动平均线（20日和60日）
+            if len(prices_df) >= 20:
+                ma20 = prices_df['close'].rolling(window=20).mean()
+                ax1.plot(prices_df['date'], ma20, 
+                        linewidth=1, color='orange', label='20日均线', alpha=0.7)
+            if len(prices_df) >= 60:
+                ma60 = prices_df['close'].rolling(window=60).mean()
+                ax1.plot(prices_df['date'], ma60, 
+                        linewidth=1, color='red', label='60日均线', alpha=0.7)
+            
+            # 设置标题和标签
+            ax1.set_title(f'{display_name} 价格走势图', fontsize=14, fontweight='bold')
+            ax1.set_ylabel('价格', fontsize=11)
+            ax1.legend(loc='best')
+            ax1.grid(True, alpha=0.3)
+            
+            # 格式化x轴日期
+            ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+            ax1.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
+            
+            # 下子图：成交量（简化版，如果有数据的话）
+            ax2 = axes[1]
+            # 这里简化处理，如果有成交量数据可以添加
+            # 计算每日涨跌
+            prices_df['change'] = prices_df['close'].pct_change() * 100
+            colors = ['red' if x < 0 else 'green' for x in prices_df['change']]
+            ax2.bar(prices_df['date'], prices_df['change'], color=colors, alpha=0.6, width=0.8)
+            ax2.set_ylabel('涨跌幅 (%)', fontsize=11)
+            ax2.set_xlabel('日期', fontsize=11)
+            ax2.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
+            ax2.grid(True, alpha=0.3)
+            
+            # 格式化x轴日期
+            ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+            ax2.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
+            
+            # 调整布局
+            plt.tight_layout()
+            
+            # 保存图表
+            chart_file = os.path.join(charts_dir, f"{symbol_code}.png")
+            plt.savefig(chart_file, dpi=150, bbox_inches='tight')
+            plt.close()
+            
+            logger.info(f"    ✓ {display_name} 图表已生成")
+        
+        # 生成综合对比图
+        logger.info("  生成综合对比图...")
+        fig, ax = plt.subplots(figsize=(14, 8))
+        
+        # 为每个标的绘制归一化后的价格走势（起始点为100）
+        for _, symbol in symbols_df.iterrows():
+            symbol_code = symbol['symbol_code']
+            display_name = symbol['display_name']
+            
+            prices_df = pd.read_sql_query("""
+                SELECT date, close
+                FROM prices
+                WHERE symbol_code = ?
+                ORDER BY date
+            """, conn, params=(symbol_code,))
+            
+            if len(prices_df) > 0:
+                # 归一化处理
+                normalized = (prices_df['close'] / prices_df['close'].iloc[0]) * 100
+                ax.plot(prices_df['date'], normalized, 
+                       linewidth=1.5, label=display_name, alpha=0.7)
+        
+        ax.set_title('各标的相对表现对比（归一化到100）', fontsize=14, fontweight='bold')
+        ax.set_ylabel('相对值（起始=100）', fontsize=11)
+        ax.set_xlabel('日期', fontsize=11)
+        ax.legend(loc='best', ncol=2, fontsize=9)
+        ax.grid(True, alpha=0.3)
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
+        
+        plt.tight_layout()
+        
+        # 保存综合对比图
+        comparison_file = os.path.join(charts_dir, "performance_comparison.png")
+        plt.savefig(comparison_file, dpi=150, bbox_inches='tight')
+        plt.close()
+        logger.info(f"    ✓ 综合对比图已生成")
+        
+        # 生成近期表现热力图（最近30天的涨跌幅）
+        logger.info("  生成近期表现热力图...")
+        fig, ax = plt.subplots(figsize=(12, 8))
+        
+        # 获取最近30天的数据
+        end_date = datetime.now()
+        start_date = end_date - pd.Timedelta(days=30)
+        
+        performance_data = []
+        for _, symbol in symbols_df.iterrows():
+            symbol_code = symbol['symbol_code']
+            display_name = symbol['display_name']
+            
+            prices_df = pd.read_sql_query("""
+                SELECT date, close
+                FROM prices
+                WHERE symbol_code = ? AND date >= ?
+                ORDER BY date
+            """, conn, params=(symbol_code, start_date.strftime('%Y-%m-%d')))
+            
+            if len(prices_df) > 1:
+                # 计算每日涨跌幅
+                returns = prices_df['close'].pct_change() * 100
+                performance_data.append({
+                    'name': display_name,
+                    'returns': returns.values[1:]  # 去掉第一个NaN
+                })
+        
+        # 绘制热力图（简化版）
+        if performance_data:
+            import numpy as np
+            data_matrix = np.array([p['returns'] for p in performance_data])
+            im = ax.imshow(data_matrix, cmap='RdYlGn', aspect='auto', vmin=-3, vmax=3)
+            ax.set_xticks(range(data_matrix.shape[1]))
+            ax.set_yticks(range(len(performance_data)))
+            ax.set_xticklabels(range(1, data_matrix.shape[1] + 1))
+            ax.set_yticklabels([p['name'] for p in performance_data])
+            plt.colorbar(im, ax=ax, label='涨跌幅 (%)')
+            ax.set_title('近30日各标的每日涨跌幅热力图', fontsize=14, fontweight='bold')
+            ax.set_xlabel('天数（最近）', fontsize=11)
+            ax.set_ylabel('标的', fontsize=11)
+            
+            plt.tight_layout()
+            heatmap_file = os.path.join(charts_dir, "performance_heatmap.png")
+            plt.savefig(heatmap_file, dpi=150, bbox_inches='tight')
+            plt.close()
+            logger.info(f"    ✓ 热力图已生成")
+    
+    logger.info(f"图表已保存到: {charts_dir}")
+    return charts_dir
+
 def main():
     print("\n" + "=" * 70)
     print("Market Data Cache Updater - GitHub Actions Edition")
