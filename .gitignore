@@ -19,8 +19,8 @@ ENV/
 # Logs
 logs/*.log
 
-# 数据库文件（可选，如果不想在仓库中保存）
-# data/*.db
+# 不要排除CSV文件！这样它们会被提交到仓库
+# *.csv
 
 # OS files
 .DS_Store
