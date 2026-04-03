@@ -496,6 +496,118 @@ class MarketDataCache:
             print(f"  {source_icon} {config['display_name']} ({code}): {count} records [{source}]")
         print("=" * 70 + "\n")
 
+def export_data_to_csv(db_path, data_dir):
+    """
+    将数据库中的数据导出为CSV文件
+    
+    Args:
+        db_path: 数据库文件路径
+        data_dir: CSV文件保存目录
+    """
+    import pandas as pd
+    
+    with db_connection(db_path) as conn:
+        # 1. 导出所有价格数据
+        logger.info("  导出价格数据...")
+        prices_df = pd.read_sql_query("""
+            SELECT 
+                s.display_name,
+                s.symbol_code,
+                p.date,
+                p.close,
+                p.market,
+                p.source,
+                p.updated_at
+            FROM prices p
+            JOIN symbols s ON p.symbol_code = s.symbol_code
+            ORDER BY p.symbol_code, p.date DESC
+        """, conn)
+        prices_csv = os.path.join(data_dir, "prices.csv")
+        prices_df.to_csv(prices_csv, index=False, encoding='utf-8-sig')
+        logger.info(f"    保存 {len(prices_df)} 条价格记录到 prices.csv")
+        
+        # 2. 导出最新价格快照
+        logger.info("  导出最新价格...")
+        latest_df = pd.read_sql_query("""
+            SELECT 
+                s.display_name,
+                s.symbol_code,
+                p.date,
+                p.close,
+                p.source
+            FROM prices p
+            JOIN symbols s ON p.symbol_code = s.symbol_code
+            WHERE (p.symbol_code, p.date) IN (
+                SELECT symbol_code, MAX(date)
+                FROM prices
+                GROUP BY symbol_code
+            )
+            ORDER BY s.name
+        """, conn)
+        latest_csv = os.path.join(data_dir, "latest_prices.csv")
+        latest_df.to_csv(latest_csv, index=False, encoding='utf-8-sig')
+        logger.info(f"    保存 {len(latest_df)} 条最新价格到 latest_prices.csv")
+        
+        # 3. 导出交易日数据
+        logger.info("  导出交易日数据...")
+        trading_df = pd.read_sql_query("""
+            SELECT 
+                market,
+                date,
+                created_at
+            FROM trading_days
+            ORDER BY market, date DESC
+        """, conn)
+        trading_csv = os.path.join(data_dir, "trading_days.csv")
+        trading_df.to_csv(trading_csv, index=False, encoding='utf-8-sig')
+        logger.info(f"    保存 {len(trading_df)} 条交易日记录到 trading_days.csv")
+        
+        # 4. 导出各标的统计信息
+        logger.info("  导出统计信息...")
+        stats_df = pd.read_sql_query("""
+            SELECT 
+                s.display_name,
+                s.symbol_code,
+                s.source,
+                COUNT(p.date) as record_count,
+                MIN(p.date) as first_date,
+                MAX(p.date) as last_date,
+                MIN(p.close) as min_price,
+                MAX(p.close) as max_price,
+                ROUND(AVG(p.close), 2) as avg_price
+            FROM symbols s
+            LEFT JOIN prices p ON s.symbol_code = p.symbol_code
+            GROUP BY s.symbol_code
+            ORDER BY s.name
+        """, conn)
+        stats_csv = os.path.join(data_dir, "statistics.csv")
+        stats_df.to_csv(stats_csv, index=False, encoding='utf-8-sig')
+        logger.info(f"    保存 {len(stats_df)} 条统计记录到 statistics.csv")
+        
+        # 5. 导出每周汇总数据（可选）
+        logger.info("  导出每周汇总...")
+        weekly_df = pd.read_sql_query("""
+            SELECT 
+                s.display_name,
+                strftime('%Y-%W', p.date) as week,
+                MIN(p.date) as week_start,
+                MAX(p.date) as week_end,
+                MIN(p.close) as week_low,
+                MAX(p.close) as week_high,
+                -- 获取周一的开盘价和周五的收盘价需要更复杂的查询
+                -- 这里简化处理
+                ROUND(AVG(p.close), 2) as week_avg
+            FROM prices p
+            JOIN symbols s ON p.symbol_code = s.symbol_code
+            GROUP BY s.symbol_code, week
+            ORDER BY s.name, week DESC
+            LIMIT 1000
+        """, conn)
+        weekly_csv = os.path.join(data_dir, "weekly_summary.csv")
+        weekly_df.to_csv(weekly_csv, index=False, encoding='utf-8-sig')
+        logger.info(f"    保存 {len(weekly_df)} 条周汇总记录到 weekly_summary.csv")
+    
+    logger.info(f"CSV文件已保存到: {data_dir}")
 
 def main():
     print("\n" + "=" * 70)
@@ -516,6 +628,14 @@ def main():
     cache = MarketDataCache()
     cache.update_all()
     cache.print_statistics()
+    
+    # ========== 新增：导出CSV文件 ==========
+    logger.info("\n导出数据为CSV格式...")
+    try:
+        export_data_to_csv(Config.DB_PATH, Config.DATA_DIR)
+        logger.info("CSV文件导出成功")
+    except Exception as e:
+        logger.error(f"CSV导出失败: {e}")
     
     return 0
 
