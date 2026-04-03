@@ -2,3 +2,4 @@ requests>=2.31.0
 yfinance>=0.2.28
 pandas>=2.0.0
 tqsdk>=3.9.0
+matplotlib>=3.7.0
