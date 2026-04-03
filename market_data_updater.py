@@ -144,6 +144,21 @@ SYMBOLS_CONFIG = {
     '标普500': {'code': '^GSPC', 'market': 'US'},
     '印度': {'code': '^BSESN', 'market': 'IN'},
     '德国DAX': {'code': '^GDAXI', 'market': 'DE'},
+        # ========== 新增：原油和油气指数 ==========
+    '原油(WTI)': {
+        'code': 'CL=F',           # 雅虎财经连续合约代码
+        'market': 'COMEX',        # 归类为商品市场
+        'decimals': 2,
+        'source': 'yahoo',
+        'display_name': '原油(WTI)'
+    },
+    '油气指数(SPSIOP)': {
+        'code': 'SPSIOP',         # 标普石油天然气上游股票指数
+        'market': 'US',           # 美国市场指数
+        'decimals': 2,
+        'source': 'yahoo',
+        'display_name': '油气指数'
+    },
     # 豆粕期货（需要天勤量化账号）
     '豆粕期货': {
         'code': 'KQ.i@DCE.m',
