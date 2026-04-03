@@ -45,26 +45,29 @@ jobs:
       run: |
         python market_data_updater.py
     
-    - name: Commit and push database and CSV files
-      run: |
-        # 配置 git 用户
-        git config user.name "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
-        
-        # 添加数据库文件和CSV文件
-        git add data/market_data.db
-        git add data/*.csv
-        
-        # 检查是否有变更需要提交
-        if git diff --cached --quiet; then
-          echo "No changes to commit"
-        else
-          # 提交变更
-          git commit -m "Update market data [skip ci] - $(date '+%Y-%m-%d %H:%M:%S')"
-          # 推送到仓库
-          git push origin HEAD:${{ github.ref_name }}
-          echo "Database and CSV files committed and pushed successfully"
-        fi
+	- name: Commit and push database and CSV files
+	  run: |
+	    # 配置 git 用户
+	    git config user.name "github-actions[bot]"
+	    git config user.email "github-actions[bot]@users.noreply.github.com"
+	    
+	    # 添加所有生成的文件
+	    git add data/market_data.db
+	    git add data/*.csv
+	    git add data/*.txt
+	    git add data/*.md
+	    git add data/charts/*.png   # 添加图表文件
+	    
+	    # 检查是否有变更需要提交
+	    if git diff --cached --quiet; then
+	      echo "No changes to commit"
+	    else
+	      # 提交变更
+	      git commit -m "Update market data and charts [skip ci] - $(date '+%Y-%m-%d %H:%M:%S')"
+	      # 推送到仓库
+	      git push origin HEAD:${{ github.ref_name }}
+	      echo "Database, CSV files and charts committed and pushed successfully"
+	    fi
     
     - name: Upload logs on failure
       if: failure()
