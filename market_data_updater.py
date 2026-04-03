@@ -939,13 +939,25 @@ def main():
     cache.update_all()
     cache.print_statistics()
     
-    # ========== 新增：导出CSV文件 ==========
+    # 导出CSV文件
     logger.info("\n导出数据为CSV格式...")
     try:
         export_data_to_csv(Config.DB_PATH, Config.DATA_DIR)
         logger.info("CSV文件导出成功")
     except Exception as e:
         logger.error(f"CSV导出失败: {e}")
+    
+    # 生成价格走势图
+    logger.info("\n生成价格走势图...")
+    try:
+        generate_price_charts(Config.DB_PATH, Config.DATA_DIR)
+        logger.info("价格走势图生成成功")
+    except Exception as e:
+        logger.error(f"图表生成失败: {e}")
+        logger.error(f"错误详情: {e}")
+        # 如果matplotlib未安装，给出提示
+        if "No module named 'matplotlib'" in str(e):
+            logger.error("请先安装matplotlib: pip install matplotlib")
     
     return 0
 
