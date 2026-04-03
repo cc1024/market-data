@@ -2,20 +2,15 @@ name: Market Data Updater
 
 on:
   schedule:
-    # 每天北京时间 8:30 执行 (UTC时间 0:30)
-    - cron: '30 0 * * *'
-    # 每天北京时间 16:00 执行 (UTC时间 8:00)
-    - cron: '0 8 * * *'
-    # 每天北京时间 22:30 执行 (UTC时间 14:30)
-    - cron: '30 14 * * *'
-  # 支持手动触发
+    - cron: '30 0 * * *'    # 北京时间 8:30
+    - cron: '0 8 * * *'     # 北京时间 16:00
+    - cron: '30 14 * * *'   # 北京时间 22:30
   workflow_dispatch:
 
 jobs:
   update-market-data:
     runs-on: ubuntu-latest
     
-    # 授予 GITHUB_TOKEN 写入权限
     permissions:
       contents: write
     
@@ -50,24 +45,25 @@ jobs:
       run: |
         python market_data_updater.py
     
-    - name: Commit and push database
+    - name: Commit and push database and CSV files
       run: |
         # 配置 git 用户
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         
-        # 添加数据库文件
+        # 添加数据库文件和CSV文件
         git add data/market_data.db
+        git add data/*.csv
         
         # 检查是否有变更需要提交
         if git diff --cached --quiet; then
           echo "No changes to commit"
         else
           # 提交变更
-          git commit -m "Update market data database [skip ci] - $(date '+%Y-%m-%d %H:%M:%S')"
+          git commit -m "Update market data [skip ci] - $(date '+%Y-%m-%d %H:%M:%S')"
           # 推送到仓库
           git push origin HEAD:${{ github.ref_name }}
-          echo "Database committed and pushed successfully"
+          echo "Database and CSV files committed and pushed successfully"
         fi
     
     - name: Upload logs on failure
