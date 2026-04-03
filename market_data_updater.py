@@ -505,6 +505,7 @@ def export_data_to_csv(db_path, data_dir):
         data_dir: CSV文件保存目录
     """
     import pandas as pd
+    from datetime import datetime
     
     with db_connection(db_path) as conn:
         # 1. 导出所有价格数据
@@ -594,8 +595,6 @@ def export_data_to_csv(db_path, data_dir):
                 MAX(p.date) as week_end,
                 MIN(p.close) as week_low,
                 MAX(p.close) as week_high,
-                -- 获取周一的开盘价和周五的收盘价需要更复杂的查询
-                -- 这里简化处理
                 ROUND(AVG(p.close), 2) as week_avg
             FROM prices p
             JOIN symbols s ON p.symbol_code = s.symbol_code
@@ -606,6 +605,120 @@ def export_data_to_csv(db_path, data_dir):
         weekly_csv = os.path.join(data_dir, "weekly_summary.csv")
         weekly_df.to_csv(weekly_csv, index=False, encoding='utf-8-sig')
         logger.info(f"    保存 {len(weekly_df)} 条周汇总记录到 weekly_summary.csv")
+        
+        # ========== 6. 生成数据摘要报告 ==========
+        logger.info("  生成数据摘要报告...")
+        
+        # 获取数据库文件大小
+        db_size = os.path.getsize(db_path) if os.path.exists(db_path) else 0
+        
+        # 获取当前时间
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # 计算一些额外统计
+        total_records = len(prices_df)
+        total_symbols = len(latest_df)
+        data_sources = prices_df['source'].value_counts().to_dict()
+        
+        # 获取最近更新时间
+        latest_update = prices_df['updated_at'].max() if len(prices_df) > 0 else '无数据'
+        
+        # 创建报告内容
+        report_lines = []
+        report_lines.append("=" * 70)
+        report_lines.append("市场数据摘要报告")
+        report_lines.append("=" * 70)
+        report_lines.append(f"报告生成时间: {now}")
+        report_lines.append(f"数据库大小: {db_size / 1024 / 1024:.2f} MB")
+        report_lines.append("")
+        
+        report_lines.append("📊 数据概览:")
+        report_lines.append(f"  • 监控标的数量: {total_symbols}")
+        report_lines.append(f"  • 总价格记录数: {total_records:,}")
+        report_lines.append(f"  • 最后更新时间: {latest_update}")
+        report_lines.append("")
+        
+        report_lines.append("📈 数据来源分布:")
+        for source, count in data_sources.items():
+            source_name = "新浪财经" if source == 'sina' else "Yahoo Finance" if source == 'yahoo' else "天勤量化"
+            report_lines.append(f"  • {source_name}: {count:,} 条记录")
+        report_lines.append("")
+        
+        report_lines.append("💰 最新价格快报:")
+        # 获取前10个标的最新价格（按名称排序）
+        for idx, row in latest_df.head(10).iterrows():
+            report_lines.append(f"  • {row['display_name']}: {row['close']:.2f} ({row['date']})")
+        if len(latest_df) > 10:
+            report_lines.append(f"  ... 还有 {len(latest_df) - 10} 个标的")
+        report_lines.append("")
+        
+        report_lines.append("📅 交易日历概况:")
+        # 获取各市场的交易日数量
+        market_counts = trading_df.groupby('market').size().to_dict()
+        market_names = {
+            'CN': '中国A股', 'US': '美国股市', 'HK': '香港股市',
+            'DE': '德国股市', 'IN': '印度股市', 'COMEX': '黄金期货'
+        }
+        for market, count in market_counts.items():
+            market_name = market_names.get(market, market)
+            report_lines.append(f"  • {market_name}: {count} 个交易日")
+        report_lines.append("")
+        
+        report_lines.append("📈 本周表现 (最近5个交易日):")
+        # 获取本周各标的涨跌幅（简化版）
+        for symbol in latest_df['display_name'].head(5):
+            symbol_data = prices_df[prices_df['display_name'] == symbol].head(5)
+            if len(symbol_data) >= 2:
+                latest = symbol_data.iloc[0]['close']
+                previous = symbol_data.iloc[-1]['close']
+                change = ((latest - previous) / previous) * 100
+                arrow = "↑" if change > 0 else "↓" if change < 0 else "→"
+                report_lines.append(f"  • {symbol}: {latest:.2f} ({arrow} {abs(change):.2f}%)")
+        report_lines.append("")
+        
+        report_lines.append("=" * 70)
+        report_lines.append("注: 详细数据请查看同目录下的CSV文件")
+        report_lines.append("=" * 70)
+        
+        # 保存报告为TXT文件
+        report_txt = os.path.join(data_dir, "report.txt")
+        with open(report_txt, 'w', encoding='utf-8') as f:
+            f.write("\n".join(report_lines))
+        logger.info(f"    数据摘要报告已保存到 report.txt")
+        
+        # 同时保存为Markdown格式（适合在GitHub上直接显示）
+        report_md = os.path.join(data_dir, "REPORT.md")
+        with open(report_md, 'w', encoding='utf-8') as f:
+            f.write("# 市场数据摘要报告\n\n")
+            f.write(f"**报告生成时间**: {now}\n\n")
+            f.write(f"**数据库大小**: {db_size / 1024 / 1024:.2f} MB\n\n")
+            
+            f.write("## 📊 数据概览\n")
+            f.write(f"- 监控标的数量: **{total_symbols}**\n")
+            f.write(f"- 总价格记录数: **{total_records:,}**\n")
+            f.write(f"- 最后更新时间: **{latest_update}**\n\n")
+            
+            f.write("## 📈 数据来源分布\n")
+            for source, count in data_sources.items():
+                source_name = "新浪财经" if source == 'sina' else "Yahoo Finance" if source == 'yahoo' else "天勤量化"
+                f.write(f"- {source_name}: {count:,} 条记录\n")
+            f.write("\n")
+            
+            f.write("## 💰 最新价格快报\n")
+            f.write("| 标的名称 | 最新价格 | 日期 |\n")
+            f.write("|---------|---------|------|\n")
+            for _, row in latest_df.iterrows():
+                f.write(f"| {row['display_name']} | {row['close']:.2f} | {row['date']} |\n")
+            f.write("\n")
+            
+            f.write("## 📅 交易日历概况\n")
+            f.write("| 市场 | 交易日数量 |\n")
+            f.write("|------|-----------|\n")
+            for market, count in market_counts.items():
+                market_name = market_names.get(market, market)
+                f.write(f"| {market_name} | {count} |\n")
+        
+        logger.info(f"    Markdown报告已保存到 REPORT.md")
     
     logger.info(f"CSV文件已保存到: {data_dir}")
 
