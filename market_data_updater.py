@@ -153,7 +153,7 @@ SYMBOLS_CONFIG = {
         'display_name': '原油(WTI)'
     },
     '油气指数(SPSIOP)': {
-        'code': 'SPSIOP',         # 标普石油天然气上游股票指数
+        'code': '^SPSIOP',         # 标普石油天然气上游股票指数
         'market': 'US',           # 美国市场指数
         'decimals': 2,
         'source': 'yahoo',
