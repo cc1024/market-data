@@ -19,6 +19,8 @@
 
 ### 商品
 - 黄金 (GC=F)
+- 原油 (CL=F)
+- 油气 (^SPSIOP)
 - 豆粕期货 (需要天勤量化账号)
 
 ## 🚀 使用方法
@@ -28,6 +30,7 @@
 1. 在仓库中找到 `data/market_data.db` 文件
 2. 下载到本地
 3. 使用SQLite客户端打开查看
+4. 或 `data/prices.csv` 价格文件和 `data/trading_days.csv` 交易日文件
 
 ### SQL查询示例
 
