@@ -152,12 +152,12 @@ SYMBOLS_CONFIG = {
         'source': 'yahoo',
         'display_name': '原油(WTI)'
     },
-    '油气指数(SPSIOP)': {
-        'code': '^SPSIOP',         # 标普石油天然气上游股票指数
-        'market': 'US',           # 美国市场指数
+    '油气指数': {
+        'code': 'XOP',
+        'market': 'US',
         'decimals': 2,
         'source': 'yahoo',
-        'display_name': '油气指数'
+        'display_name': '油气指数(XOP)'
     },
     # 豆粕期货（需要天勤量化账号）
     '豆粕期货': {
