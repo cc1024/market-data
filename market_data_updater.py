@@ -686,6 +686,8 @@ def export_data_to_csv(db_path, data_dir):
         
         # 获取当前时间
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        now_with_tz = f"{now} (UTC时间，北京时间需+8小时)"
+
         
         # 计算一些额外统计
         total_records = len(prices_df)
@@ -706,7 +708,7 @@ def export_data_to_csv(db_path, data_dir):
         report_lines.append("=" * 70)
         report_lines.append("市场数据摘要报告")
         report_lines.append("=" * 70)
-        report_lines.append(f"报告生成时间: {now}")
+        report_lines.append(f"报告生成时间: {now_with_tz}")
         report_lines.append(f"数据库大小: {db_size / 1024 / 1024:.2f} MB")
         report_lines.append("")
         
@@ -752,7 +754,7 @@ def export_data_to_csv(db_path, data_dir):
         report_md = os.path.join(data_dir, "REPORT.md")
         with open(report_md, 'w', encoding='utf-8') as f:
             f.write("# 市场数据摘要报告\n\n")
-            f.write(f"**报告生成时间**: {now}\n\n")
+            f.write(f"**报告生成时间**: {now} (UTC时间，北京时间需+8小时)\n\n")
             f.write(f"**数据库大小**: {db_size / 1024 / 1024:.2f} MB\n\n")
             
             f.write("## 📊 数据概览\n")
