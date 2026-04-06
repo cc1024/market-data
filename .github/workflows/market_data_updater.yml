@@ -2,9 +2,9 @@ name: Market Data Updater
 
 on:
   schedule:
-    - cron: '30 0 * * 1-5'    # 北京时间 8:30
-    - cron: '0 8 * * 1-5'     # 北京时间 16:00
-    - cron: '30 14 * * 1-5'   # 北京时间 22:30
+    - cron: '30 0 * * *'    # 北京时间 8:30
+    - cron: '0 8 * * *'     # 北京时间 16:00
+    - cron: '30 14 * * *'   # 北京时间 22:30
   workflow_dispatch:
 
 jobs:
