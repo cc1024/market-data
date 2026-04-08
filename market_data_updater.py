@@ -304,7 +304,7 @@ class MarketDataCache:
             return []
     
     def _get_prices_from_sina(self, symbol_code, start_date, end_date, decimals=3):
-        dates, closes = SinaFinanceAPI.get_etf_history(symbol_code, datalen=1023)
+        dates, closes = SinaFinanceAPI.get_etf_history(symbol_code, datalen=500)
         if not dates or not closes:
             return []
         
