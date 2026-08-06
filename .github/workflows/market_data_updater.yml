@@ -97,3 +97,10 @@ jobs:
         name: error-logs-${{ github.run_id }}
         path: logs/
         retention-days: 30
+
+    - name: Upload charts as artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: price-charts
+        path: data/charts/*.png
+        retention-days: 30
