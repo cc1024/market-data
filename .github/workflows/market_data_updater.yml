@@ -83,7 +83,7 @@ jobs:
           echo "No changes to commit"
         else
           # 提交变更
-          git commit -m "Update market data and charts [skip ci] - $(date '+%Y-%m-%d %H:%M:%S')"
+          git commit -m "Update market data [skip ci] - $(date '+%Y-%m-%d %H:%M:%S')"
           # 推送到仓库
           git push origin HEAD:${{ github.ref_name }}
           echo "Database, CSV files and charts committed and pushed successfully"
